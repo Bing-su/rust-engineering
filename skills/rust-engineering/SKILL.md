@@ -1,6 +1,6 @@
 ---
 name: rust-engineering
-description: Design, implement, refactor, and review production Rust codebases. Prioritizes maintainable codebase architecture, domain modeling, deep modules, clear seams, testability, and simple dependency structure, while using Rust's type system, ownership model, and tooling to reinforce those goals.
+description: Use this skill when implementing, refactoring, or reviewing production Rust code, or designing its domain model and module boundaries. Favor maintainable architecture, explicit ownership, testable behavior, and dependencies that reduce maintained code.
 ---
 
 # Rust Engineering
@@ -31,14 +31,14 @@ Choose **Implement** for requested changes and **Review** for an assessment. Rev
 
 ## Explore
 
-Apply Understand Before Editing. Establish the requested behavior or review scope and read repository instructions. Also inspect the lockfile, supported targets, and CI commands.
+Establish the requested behavior or review scope and read repository instructions. Inspect the relevant module, callers, tests, domain documentation, Cargo manifests, lockfile, supported targets, toolchain/MSRV, and CI commands. Preserve established architecture unless a concrete problem justifies changing it.
 
 Finish exploration when you can identify the behavior's owner, affected callers and contracts, and checks needed to verify it.
 
 ## Implement
 
 1. Identify the smallest useful interface, important invariants, side effects, and ownership model. For a non-trivial new module, briefly consider two plausible designs.
-2. Complete one useful behavior end-to-end. Reuse existing code and suitable dependencies; apply Prefer Crates That Remove Maintained Code before hand-writing supporting functionality. Keep unrelated cleanup out of scope.
+2. Complete one useful behavior end-to-end. Reuse existing code and suitable dependencies; apply Dependency Selection before hand-writing supporting functionality. Keep unrelated cleanup out of scope.
 3. Add or update the smallest meaningful regression check for changed behavior. For a bug, establish a check exposing the failure before fixing its shared cause.
 4. Run relevant verification below and inspect the final diff for correctness, compatibility, and unnecessary concepts. Preserve behavior during refactoring unless a behavior change was requested.
 
@@ -102,559 +102,88 @@ Report what ran, passed, failed, or could not run. Compilation and lint success 
 
 ---
 
-# Understand Before Editing
+## Load References When Needed
 
-Before making substantial changes:
+| Task condition                                                                                                                                                 | Required reference                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Designing or changing domain types, module boundaries, polymorphic seams, ownership, or configuration APIs; reviewing those design choices                     | Read [Design examples](references/design-examples.md) for concrete tradeoffs and examples |
+| Implementing functionality that may replace hand-written support code with a crate, selecting a dependency, or reviewing custom helpers and dependency choices | Read [Crate defaults](references/crate-defaults.md) before choosing an implementation     |
 
-- Read the relevant module, its callers, and its tests.
-- Inspect `Cargo.toml`, workspace layout, features, and toolchain/MSRV constraints.
-- Look for existing project conventions before introducing new ones.
-- Read domain documentation, glossary, ADRs, or equivalent files when present.
-- Determine whether the requested change belongs inside an existing module or reveals a missing abstraction.
+Load only the references relevant to the current task. The decision criteria below apply throughout.
 
-Do not start by creating new traits, modules, wrappers, or generic abstractions.
+## Design Decisions
 
-First understand where the behavior naturally belongs.
+| Concern       | Decision criterion                                                                                                                                                                                                                                                                       |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Domain model  | Use domain vocabulary. Distinguish concepts with different rules or lifecycles, validate boundary input into domain types, and check allowed transitions as well as representable states. Prefer ordinary structs and enums; wrappers must add a useful invariant or caller distinction. |
+| Deep modules  | Hide cohesive behavior behind a small interface. Count invariants, ordering, failure modes, and configuration as interface cost. An abstraction earns its place when removing it would spread meaningful complexity across callers.                                                      |
+| Seams         | Add traits for demonstrated variation, a useful test substitute at a stable seam, an infrastructure boundary, a plugin contract, or independently owned implementations. Keep a single implementation concrete when polymorphism adds no value.                                          |
+| Dependencies  | Keep framework, transport, serialization, and database details near their boundaries unless they belong to the domain. Convert infrastructure inputs into domain commands there.                                                                                                         |
+| Locality      | Keep behavior that changes together together. Concentrate shared invariants and orchestration; file size and similar syntax alone do not justify splitting or generalizing.                                                                                                              |
+| Data flow     | Make inputs, outputs, dependencies, and effects explicit. Separate computation from effects where this improves independent understanding and testability.                                                                                                                               |
+| Ownership     | Assign ownership to the module responsible for the value. Reconsider responsibility, lifetimes, and mutation before solving borrow conflicts with clones, sharing, or lifetime machinery. Borrow when ownership is unnecessary; small intentional clones are acceptable.                 |
+| Configuration | Prefer explicit domain operations or coherent configuration objects. Many unrelated booleans can indicate several concepts compressed into one API.                                                                                                                                      |
+| Public APIs   | Default to private visibility and expose only what callers need. `pub(crate)` is crate-local; workspace siblings need an appropriate `pub` interface. Keep internal helper types and mutable fields private unless they serve a caller contract.                                         |
 
-When modifying an existing codebase, preserve its established architecture unless there is a concrete reason to change it.
+## Shared State and Async
 
----
+Choose synchronization from actual access requirements. Consider ownership transfer, immutable sharing, message passing, shorter lifetimes, or split responsibilities before adding shared mutation. An actor is not automatically simpler than a lock.
 
-# Model the Domain Explicitly
+Keep locking regions small and visible. Never hold blocking locks across `.await`. Treat cancellation, shutdown, backpressure, and task ownership as part of the API contract.
 
-Code should use the language of the problem domain.
+## Errors
 
-Prefer domain concepts over implementation concepts.
+Keep failures meaningful at module boundaries: typed errors for library callers that need recovery decisions, and contextual propagation at application boundaries. Expose implementation details only when callers need them.
 
-Bad:
+Use `unwrap()` or `expect()` in production only for a guaranteed, locally obvious invariant. Retain structured failures until callers no longer need to distinguish them.
 
-```rust
-struct DataManager;
-struct RequestHandler;
-struct ItemProcessor;
-```
+## Tests
 
-Better:
+Exercise observable behavior through stable module interfaces. Use unit tests for deterministic logic, integration tests for important interactions, and end-to-end tests for critical system behavior. Mock at meaningful seams; a behavior-preserving refactor should rarely require rewriting tests.
 
-```rust
-struct AlertRule;
-struct DetectionResult;
-struct WorkflowExecution;
-```
+| Concrete risk or verification need                                   | Technique to consider                  |
+| -------------------------------------------------------------------- | -------------------------------------- |
+| Parser, transform, algorithm, or domain invariant across many inputs | Property testing                       |
+| Hostile or structurally complex input                                | Fuzzing                                |
+| Subtle concurrency interleavings                                     | `loom`                                 |
+| Unsafe or memory-sensitive behavior                                  | Miri where supported                   |
+| Large stable structured output suited to diff review                 | Snapshot tests with intentional review |
+| Performance-sensitive paths or claimed improvements                  | Benchmarks on the relevant workload    |
 
-When two concepts have different rules or lifecycles, model them as different types even if their underlying representation is identical.
+Use specialized tools only when they address a concrete failure mode.
 
-Prefer:
+## Unsafe and FFI
 
-```rust
-// Keep user and session identifiers distinct so callers cannot swap them.
-struct UserId(Uuid);
-struct SessionId(Uuid);
-```
+Prefer a safe design when practical. Unsafe code must remain small, isolated behind appropriate interfaces, and supported by an explicit safety argument.
 
-over passing unrelated values as generic `Uuid`, `String`, or integers everywhere.
+| Construct                              | Required argument                                                               |
+| -------------------------------------- | ------------------------------------------------------------------------------- |
+| `unsafe` block                         | A `SAFETY` comment explaining why the operation's preconditions hold here       |
+| `unsafe impl`, including `Send`/`Sync` | Proof of the trait contract, including ownership and synchronization invariants |
+| Public `unsafe fn` or unsafe trait     | A `# Safety` contract describing caller or implementer obligations              |
 
-Use types to make invalid states difficult to construct, but do not create ceremonial wrapper types that add no useful invariant or meaning.
+For example, constructing a slice from a raw pointer requires validity, alignment, initialization, length, lifetime, and aliasing guarantees; non-nullness alone is insufficient.
 
-Ask:
+At FFI boundaries, verify layout, ownership transfer, matching deallocation, callback lifetimes, and permitted unwinding. A safe wrapper must uphold hidden obligations for every permitted caller. Miri results supplement the safety argument rather than proving soundness for every caller.
 
-- What concepts exist in this domain?
-- Which states are valid?
-- Which transitions are allowed?
-- Which invariants can be represented structurally?
-- Which distinctions matter to callers?
+## Performance
 
-Use "parse, don't validate" where appropriate: convert loosely structured input into a validated domain representation at the system boundary.
+Before complicating a design, identify a relevant workload, measure it, locate the bottleneck, make the smallest useful change, and measure again. Prefer algorithmic and architectural improvements before micro-optimizations.
 
-| Domain need          | Prefer                                                                                               |
-| -------------------- | ---------------------------------------------------------------------------------------------------- |
-| Closed states        | An enum, such as `JobState::{Pending, Running, Completed, Failed}`, rather than coordinated booleans |
-| Distinct identifiers | Newtypes when the distinction matters to callers                                                     |
-| Constrained values   | Validated constructors and controlled mutation                                                       |
-| Expected absence     | `Option`                                                                                             |
-| Expected failure     | `Result`                                                                                             |
+Zero-copy, pooling, unsafe code, custom allocation, lock-free structures, and advanced generics need evidence supporting their added complexity. Report measurements for performance claims.
 
-Check allowed transitions as well as representable states. Prefer ordinary structs and enums to generic, lifetime, macro, or typestate machinery unless the extra machinery removes concrete complexity. Types should reduce cognitive load.
+## Dependency Selection
 
----
+Minimize code and behavior to maintain, rather than dependency count alone. Reuse an existing suitable crate first. When implementation or review reaches a task in [Crate defaults](references/crate-defaults.md), use its default instead of reimplementing that functionality unless a concrete constraint favors another choice.
 
-# Design Deep Modules
+Use std when it already covers the required semantics directly. Preserve compatible existing alternatives. Concrete exceptions include repository policy, MSRV, `no_std`, target support, license restrictions, or disproportionate build/binary cost; explain the reason briefly.
 
-Prefer modules that hide substantial behavior behind small interfaces.
+Before adding a dependency, check workspace versions, current crate documentation and maintenance/advisories, required features, MSRV, supported targets, and repository policy. Select a compatible version at implementation time; test/benchmark-only crates belong in dev dependencies.
 
-A good module provides leverage:
+Keep dependencies behind meaningful interfaces when that reduces coupling; call them directly when a forwarding wrapper adds no value. Report the chosen crate and the maintained implementation it replaces in one sentence.
 
-- callers learn little,
-- callers can accomplish a lot,
-- implementation details remain local,
-- changes remain concentrated.
+## Refactoring
 
-Avoid modules that merely rename or forward calls.
+Preserve behavior unless the requested task changes it. Favor small structural improvements that reduce caller concepts, strengthen locality and ownership, or remove duplicated invariants.
 
-Before creating an abstraction, apply the deletion test:
-
-> If this abstraction disappeared, would meaningful complexity spread across several callers?
-
-If not, the abstraction may not be earning its existence.
-
-Prefer:
-
-```text
-small interface
-      ↓
-substantial cohesive behavior
-```
-
-over:
-
-```text
-large interface
-      ↓
-thin forwarding layer
-      ↓
-another thin forwarding layer
-```
-
-A function, type, module, crate, or subsystem can all be a module in this sense.
-
-An interface includes the invariants, ordering, error modes, and configuration callers must understand, not only type signatures.
-
----
-
-# Put Seams Where Behavior Actually Varies
-
-A seam is a place where one implementation can be changed without rewriting its callers.
-
-Introduce seams for real variation, not imagined future variation.
-
-Avoid creating traits merely because dependency inversion is theoretically possible.
-
-One implementation usually does not require a trait.
-
-Prefer:
-
-```rust
-struct SqliteEventStore {
-    // Keep persistence concrete until a real seam requires polymorphism.
-}
-```
-
-until there is a real second implementation, testing requirement, plugin boundary, or architectural reason for polymorphism.
-
-Add a trait when the seam has demonstrated value.
-
-Good reasons include:
-
-- multiple meaningful implementations,
-- external infrastructure boundary,
-- test substitute at a stable architectural seam,
-- plugin or extension point,
-- independent ownership of implementations.
-
-Poor reasons include:
-
-- "we may need another implementation someday",
-- "traits are cleaner",
-- "dependency injection requires interfaces".
-
-Duplication is often cheaper than the wrong abstraction. Generalize shared semantics once they are clear, rather than similar syntax that needs configuration flags to fit.
-
-Avoid generic frameworks for hypothetical future requirements.
-
----
-
-# Keep Dependencies Pointing Toward Stable Concepts
-
-Domain logic should not depend unnecessarily on frameworks, databases, HTTP libraries, serialization formats, or runtime details.
-
-Prefer:
-
-```text
-transport / persistence / framework
-              ↓
-         application logic
-              ↓
-           domain
-```
-
-Infrastructure should adapt to the domain, rather than defining it.
-
-Do not leak infrastructure-specific types deeply into the codebase unless they are genuinely part of the domain.
-
-For example, prefer converting an HTTP request into a domain command near the HTTP boundary rather than passing framework request objects through multiple layers.
-
-Likewise, database row types should usually remain near persistence code.
-
----
-
-# Optimize for Locality
-
-Behavior that changes together should usually live together.
-
-Avoid spreading one feature across many tiny modules merely to achieve superficial separation.
-
-Signs of poor locality:
-
-- understanding one operation requires jumping through many files,
-- changing one rule requires editing many unrelated modules,
-- validation is duplicated across callers,
-- orchestration logic is repeated,
-- important invariants exist only in call-site conventions.
-
-Prefer concentrating related behavior behind one coherent interface.
-
-Small files are not automatically good design.
-Large files are not automatically bad design.
-
-Optimize for conceptual locality, not line count.
-
----
-
-# Prefer Explicit Data Flow
-
-Make dependencies, inputs, outputs, and side effects visible.
-
-Prefer functions that accept what they need and return meaningful results.
-
-Prefer:
-
-```rust
-fn evaluate(rule: &Rule, event: &Event) -> DetectionResult
-```
-
-over hidden access to global state or implicit service locators.
-
-Separate computation from effects where it improves clarity.
-
-A useful shape is:
-
-```text
-input
-  ↓
-domain computation
-  ↓
-decision/result
-  ↓
-effectful adapter
-```
-
-Do not force pure-functional architecture where it makes the code less clear, but keep important business logic independently understandable whenever practical.
-
----
-
-# Use Rust Ownership to Express Architecture
-
-Ownership should reflect responsibility.
-
-Ask:
-
-- Who owns this value?
-- Who is allowed to mutate it?
-- How long must it live?
-- Is sharing actually necessary?
-
-Do not use `clone()` merely to silence the borrow checker.
-
-A borrow-checker conflict often indicates one of:
-
-- ownership is assigned to the wrong module,
-- responsibilities are mixed,
-- a function is doing too much,
-- data lives too long,
-- mutation is occurring at the wrong level.
-
-Reconsider the design before adding clones, `Arc`, `Mutex`, or lifetime complexity.
-
-Prefer borrowed inputs where ownership is unnecessary:
-
-```rust
-fn parse(input: &str)
-fn process(items: &[Item])
-```
-
-rather than:
-
-```rust
-fn parse(input: String)
-fn process(items: Vec<Item>)
-```
-
-when the function does not need ownership.
-
-But do not contort APIs to avoid small, intentional clones.
-Clarity beats theoretical allocation purity.
-
-The compiler is a design constraint, not the architect; a borrow-checker fix should still communicate responsibility clearly.
-
----
-
-# Minimize Shared Mutable State
-
-Shared mutable state is an architectural decision, not a convenience.
-
-Do not introduce:
-
-```rust
-Arc<Mutex<T>>
-```
-
-as a default solution to ownership problems.
-
-First consider:
-
-- transferring ownership,
-- message passing,
-- immutable shared state,
-- actor/task ownership,
-- splitting read and write responsibilities,
-- shortening lifetimes,
-- restructuring the operation.
-
-Use shared synchronization when the domain actually requires shared mutable access.
-
-Choose the simplest correct option; an actor is not automatically simpler than a lock.
-
-Keep locking regions small and obvious.
-
-Never hold blocking locks across `.await`.
-
-Treat cancellation, shutdown, backpressure, and task ownership as part of async API design.
-
----
-
-# Error Handling Is Interface Design
-
-An error is part of a module's interface.
-
-Do not expose internal implementation errors directly when callers should reason about a smaller set of domain failures.
-
-Libraries should generally define meaningful error types.
-
-Applications may add contextual information when propagating failures.
-
-Avoid routine `unwrap()` and `expect()` in production paths.
-
-They are acceptable when an invariant is genuinely guaranteed and locally obvious.
-
-Do not collapse meaningful failures into strings too early.
-
-Prefer errors that help callers decide what to do next.
-
-Ask:
-
-- Can the caller recover?
-- Should this failure cross the module seam?
-- Is this an invariant violation or an expected failure?
-- Does the caller need implementation details?
-
----
-
-# Prefer Composition Over Configuration Explosion
-
-Avoid functions, structs, or modules whose behavior is controlled by many booleans or unrelated options.
-
-Bad:
-
-```rust
-process(
-    event,
-    true,
-    false,
-    true,
-    RetryMode::Aggressive,
-)
-```
-
-Prefer explicit domain operations or configuration objects with coherent meaning.
-
-If many flags change the semantics of an operation, consider whether multiple concepts have been compressed into one module.
-
----
-
-# Keep Public Interfaces Small
-
-Every public item creates maintenance cost.
-
-Default to private visibility.
-
-Use `pub(crate)` for visibility within the current crate. Other crates, including workspace siblings, require an appropriate `pub` interface; Rust has no workspace-only visibility modifier.
-
-Expose only what callers genuinely need.
-
-Avoid leaking internal helper types.
-
-Do not make fields public merely for convenience.
-
-A smaller interface:
-
-- is easier to understand,
-- is easier to test,
-- allows more implementation freedom,
-- reduces accidental coupling.
-
----
-
-# Tests Verify Behavior Through Seams
-
-Tests should primarily exercise stable behavior through meaningful module interfaces.
-
-Avoid tests coupled to internal implementation structure.
-
-Do not mock every internal collaborator.
-
-Prefer realistic tests at meaningful seams.
-
-Use unit tests for dense deterministic logic.
-Use integration tests for important interactions between modules.
-Use end-to-end tests sparingly for critical system behavior.
-
-A refactor that preserves behavior should not require rewriting most tests.
-
-If tests break whenever internal structure changes, the test seam is probably wrong.
-
-Test names should describe domain behavior, not implementation mechanics.
-
----
-
-# Use Specialized Testing When It Buys Confidence
-
-Choose testing techniques based on risk.
-
-Consider:
-
-- property testing for parsers, transforms, invariants, and algorithms,
-- fuzzing for hostile or structurally complex inputs,
-- `loom` for subtle concurrency behavior,
-- Miri for unsafe or memory-sensitive code,
-- snapshot tests for stable structured output where reviewing diffs is valuable,
-- benchmarks for performance-sensitive paths.
-
-Do not add specialized tools ceremonially.
-
-Use them where they address a concrete failure mode.
-
----
-
-# Unsafe Requires a Proof Obligation
-
-Do not use `unsafe` to bypass architectural or borrow-checker problems.
-
-Before adding unsafe code, determine whether a safe design is practical.
-
-| Unsafe construct                       | Required argument                                                                                             |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `unsafe` block                         | A `SAFETY` comment explaining why the operation's preconditions hold here                                     |
-| `unsafe impl`, including `Send`/`Sync` | An explicit proof of the trait's safety contract, including relevant ownership and synchronization invariants |
-| Public `unsafe fn` or unsafe trait     | A `# Safety` contract documenting caller or implementer obligations                                           |
-
-For example, before constructing a slice from a raw pointer, explain its validity, alignment, initialization, length, lifetime, and aliasing guarantees. Non-nullness alone is not a complete proof.
-
-At FFI boundaries, verify layout, ownership transfer, matching deallocation, callback lifetimes, and permitted unwinding.
-
-Keep unsafe code:
-
-- small,
-- isolated,
-- covered by safe interfaces,
-- tested independently where practical.
-
-Use Miri when relevant and supported. Passing Miri on exercised paths supplements the safety argument; it does not prove soundness for every caller.
-
-Safe wrappers must uphold hidden safety obligations for every permitted caller. Unsafe APIs must document any obligations left to their callers.
-
----
-
-# Performance Requires Evidence
-
-Do not optimize code based only on intuition.
-
-Before complicating a design for performance:
-
-1. identify the relevant workload,
-2. measure it,
-3. locate the actual bottleneck,
-4. change the smallest useful area,
-5. measure again.
-
-Do not replace clear architecture with complex zero-copy, pooling, unsafe code, custom allocation, lock-free structures, or advanced generics without evidence.
-
-Prefer algorithmic and architectural improvements before micro-optimizations.
-
-Performance claims require measurements.
-
----
-
-# Prefer Crates That Remove Maintained Code
-
-Minimal implementation means minimizing code and behavior we must maintain, not minimizing the dependency count. Prefer a suitable established crate over hand-written parsing, protocol handling, repetitive trait implementations, or custom infrastructure.
-
-Reuse the project's existing suitable crate first. Otherwise, when a trigger below applies, **add the recommended crate by default** instead of reimplementing its functionality. An absent dependency is not a reason to choose a manual implementation. These are task-specific defaults, not a starter dependency bundle.
-
-Use the standard library when it already covers the required semantics directly. Depart from a default for a concrete reason, such as repository policy, MSRV, `no_std`, target support, license restrictions, or disproportionate build/binary cost. Explain that reason briefly; dependency count alone is insufficient. Keep compatible existing alternatives rather than migrating them just to match this list.
-
-## Common Defaults
-
-| Task trigger                                                           | Default crate                                                                                                                                               | Replace or avoid                                                                                                                     |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Define custom errors that callers distinguish                          | [thiserror](https://docs.rs/thiserror/latest/thiserror/)                                                                                                    | Repetitive manual `Display`, `Error`, source chaining, and `From` implementations                                                    |
-| Propagate varied errors with context at application/CLI boundaries     | [anyhow](https://docs.rs/anyhow/latest/anyhow/)                                                                                                             | Ad-hoc boxed errors and string conversion; retain typed errors where callers need recovery decisions                                 |
-| Serialize/deserialize structured data                                  | [serde](https://docs.rs/serde/latest/serde/), plus [serde_json](https://docs.rs/serde_json/latest/serde_json/) for JSON                                     | Manual codecs and JSON string assembly; prefer typed payloads for known schemas                                                      |
-| CLI options, flags, subcommands, help, or argument validation          | [clap](https://docs.rs/clap/latest/clap/)                                                                                                                   | A growing `std::env::args` parser; a single positional argument can stay in std                                                      |
-| Operational logging, especially async or request-scoped diagnostics    | [tracing](https://docs.rs/tracing/latest/tracing/) and application-side [tracing-subscriber](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/) | Custom logging/context plumbing; libraries emit events and leave subscriber setup to applications                                    |
-| Named combinable bit masks                                             | [bitflags](https://docs.rs/bitflags/latest/bitflags/)                                                                                                       | Manual flag wrappers, bit operators, and membership helpers; preserve required representation and unknown-bit behavior               |
-| Parse, resolve, or modify URLs and query parameters                    | [url](https://docs.rs/url/latest/url/)                                                                                                                      | Splitting URLs or concatenating unescaped query strings; URL parsing does not establish destination authorization                    |
-| Generate, parse, or format UUIDs required by the domain/protocol       | [uuid](https://docs.rs/uuid/latest/uuid/)                                                                                                                   | Custom UUID/random identifier implementations; retain ordinary numeric IDs where those are the actual contract                       |
-| Regular-expression matching                                            | [regex](https://docs.rs/regex/latest/regex/)                                                                                                                | A homegrown pattern matcher; compile reusable patterns once, use string methods for literal matching                                 |
-| Temporary files/directories with lifecycle cleanup                     | [tempfile](https://docs.rs/tempfile/latest/tempfile/)                                                                                                       | Invented temporary names and scattered cleanup; use as a dev dependency when only tests need it                                      |
-| Recursive directory traversal                                          | [walkdir](https://docs.rs/walkdir/latest/walkdir/)                                                                                                          | Hand-written recursive traversal; preserve explicit error and symlink policy                                                         |
-| Iterator operations missing from std that remove custom loops/helpers  | [itertools](https://docs.rs/itertools/latest/itertools/)                                                                                                    | Custom grouping, combinations, or join utilities; use std iterator methods when equivalent                                           |
-| Calendar dates/times, timestamps, parsing, or formatting               | [chrono](https://docs.rs/chrono/latest/chrono/)                                                                                                             | Hand-written calendar arithmetic; use `std::time` for elapsed time and simple durations                                              |
-| Exact decimal arithmetic with variable scale, such as prices and rates | [rust_decimal](https://docs.rs/rust_decimal/latest/rust_decimal/)                                                                                           | Floating-point money and a custom decimal type; fixed-scale integer minor units remain valid, with explicit rounding/overflow policy |
-
-For example, a permission mask should usually become a `bitflags!` type rather than a newtype with manual operators. A library's typed error can use `thiserror`, while its CLI adds `anyhow::Context`; these choices serve different callers and can coexist.
-
-## Development Defaults When the Technique Applies
-
-| Concrete testing need                                       | Default dev dependency                                   | Use it for                                                                                                |
-| ----------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Multiple named input/output cases or reusable test setup | [rstest](https://docs.rs/rstest/latest/rstest/) | Parameterized `#[case]` tests and `#[fixture]` setup instead of duplicated tests or a custom case runner |
-| Properties over many parser, transform, or invariant inputs | [proptest](https://docs.rs/proptest/latest/proptest/)    | Input generation and shrinking rather than a custom randomized test harness                               |
-| Large stable output best verified by reviewing diffs        | [insta](https://docs.rs/insta/latest/insta/)             | Snapshots with intentional review; normalize nondeterminism and keep focused assertions for small results |
-| Repeated performance comparisons                            | [criterion](https://docs.rs/criterion/latest/criterion/) | Benchmark sampling and comparisons rather than a homegrown timing harness                                 |
-
-Ordinary unit and integration tests use Rust's built-in test harness; `rstest` augments it when parameterization or fixtures reduce repetition. For example, use named cases for valid, empty, and malformed parser input so failures identify the specific case. Specialized tools still require the concrete risks described in Use Specialized Testing When It Buys Confidence.
-
-## Add Only the Relevant Dependency
-
-Before adding, check the workspace manifest and existing versions, current crate documentation and maintenance/advisories, required features, MSRV, targets, and repository dependency policy. Select a compatible version at implementation time rather than copying a version from this skill. Test/benchmark-only crates belong in dev dependencies.
-
-Keep dependencies behind meaningful interfaces where it reduces coupling. Call them directly when a forwarding wrapper would add no value. Report the chosen crate and the implementation it replaced in one sentence; do not build a comparison framework or add unrelated dependencies.
-
----
-
-# Refactoring Rules
-
-Refactor toward:
-
-- fewer concepts callers must understand,
-- smaller interfaces,
-- stronger locality,
-- clearer ownership,
-- fewer duplicated invariants,
-- simpler dependencies,
-- better domain language.
-
-Do not refactor solely to:
-
-- reduce line count,
-- increase abstraction,
-- introduce design patterns,
-- split files,
-- eliminate every duplicate,
-- maximize trait usage.
-
-A refactor should make future changes easier.
-
-Prefer small structural improvements over broad rewrites.
-
-Preserve behavior unless changing behavior is part of the task.
+Judge a refactor by easier future changes, rather than line count, file count, pattern usage, or trait usage. Generalize shared semantics once they are clear; similar syntax alone may be cheaper to duplicate.
