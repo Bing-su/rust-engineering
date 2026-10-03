@@ -1,0 +1,30 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "rust-engineering",
+  "version": "0.1.0",
+  "description": "Implement, refactor, and review production Rust code with clear domain models and maintainable module boundaries.",
+  "author": {
+    "name": "Bing-su",
+    "url": "https://github.com/Bing-su"
+  },
+  "homepage": "https://github.com/Bing-su/rust-engineering",
+  "repository": "https://github.com/Bing-su/rust-engineering",
+  "license": "BlueOak-1.0.0",
+  "keywords": ["rust", "engineering", "architecture", "refactoring", "code-review"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Rust Engineering",
+        "shortDescription": "Build maintainable Rust code",
+        "longDescription": "Implement, refactor, and review production Rust code. Prioritize clear domain models, good module boundaries, explicit ownership, testable behavior, and dependencies that reduce maintained code. Includes design examples and crate selection guidance.",
+        "developerName": "Bing-su",
+        "category": "Developer Tools",
+        "defaultPrompt": [
+          "Use Rust Engineering to implement this Rust feature.",
+          "Use Rust Engineering to refactor this Rust module while preserving behavior.",
+          "Use Rust Engineering to review these Rust changes."
+        ]
+      }
+    }
+  }
+}

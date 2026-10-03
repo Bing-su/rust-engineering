@@ -1,0 +1,20 @@
+{
+  "name": "rust-engineering",
+  "interface": {
+    "displayName": "Rust Engineering"
+  },
+  "plugins": [
+    {
+      "name": "rust-engineering",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Bing-su/rust-engineering.git"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}
