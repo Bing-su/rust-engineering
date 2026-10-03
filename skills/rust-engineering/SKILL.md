@@ -25,6 +25,83 @@ Do not sacrifice higher priorities for lower ones without a concrete reason.
 
 ---
 
+# Workflow
+
+Choose **Implement** for requested changes and **Review** for an assessment. Review alone does not authorize edits. Both start with Explore and use the relevant principles below.
+
+## Explore
+
+Apply Understand Before Editing. Establish the requested behavior or review scope and read repository instructions. Also inspect the lockfile, supported targets, and CI commands.
+
+Finish exploration when you can identify the behavior's owner, affected callers and contracts, and checks needed to verify it.
+
+## Implement
+
+1. Identify the smallest useful interface, important invariants, side effects, and ownership model. For a non-trivial new module, briefly consider two plausible designs.
+2. Complete one useful behavior end-to-end. Reuse existing code and suitable dependencies; apply Prefer Crates That Remove Maintained Code before hand-writing supporting functionality. Keep unrelated cleanup out of scope.
+3. Add or update the smallest meaningful regression check for changed behavior. For a bug, establish a check exposing the failure before fixing its shared cause.
+4. Run relevant verification below and inspect the final diff for correctness, compatibility, and unnecessary concepts. Preserve behavior during refactoring unless a behavior change was requested.
+
+Finish when the requested behavior is implemented, relevant checks pass, and the diff contains only justified changes. If verification is blocked, report the remaining gap explicitly rather than claiming verified completion.
+
+## Review
+
+1. **Establish scope.** Use the requested commit, branch, diff, files, or whole-codebase scope. For a working-tree review, include staged, unstaged, and relevant untracked files. Identify affected public APIs, persistent data, wire formats, and security boundaries.
+2. **Trace behavior.** Follow the scoped code through callers, state changes, effects, failure paths, cleanup, and observable output. Compare it with the requested specification and repository standards.
+3. **Validate findings.** Apply the relevant risks below. Search and lint hits are leads, not findings: confirm the triggering condition and consequence in surrounding code.
+4. **Verify and report.** Run relevant checks where practical. Report actionable findings by severity; separate unconfirmed risks and verification gaps from confirmed defects. Apply fixes only when requested.
+
+| Changed area              | Review risks                                                                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Inputs and failures       | Boundary validation, reachable panics, arithmetic on external sizes, partial updates, rollback and cleanup failures                        |
+| Async and concurrency     | Lock ordering, guards across await, blocking executor work, cancellation data loss, bounded queues, overload, task ownership and shutdown  |
+| Unsafe and FFI            | Safety contracts, validity, alignment, initialization, aliasing, layout, ownership transfer, deallocation, unwinding, manual `Send`/`Sync` |
+| Public contracts          | Visibility, trait and auto-trait changes, error variants, serialized shapes, features, targets, MSRV and semver                            |
+| Security and dependencies | Attacker-controlled paths, secret exposure in logs/errors/Debug output, resource limits, advisories and repository supply-chain policy     |
+| Performance               | Material costs on actual workloads, quadratic work, unbounded growth and evidence supporting claims                                        |
+| Tests and documentation   | Observable regressions, relevant failures, API contracts, safety requirements and executable public examples                               |
+
+| Finding field | Required content                                                                                                                            |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Severity      | P1: urgent correctness, safety or security defect; P2: actionable defect under a concrete condition; P3: lower-impact maintainability issue |
+| Location      | File and tight line range                                                                                                                   |
+| Condition     | Concrete input or caller path triggering the issue                                                                                          |
+| Impact        | Observable behavior, safety, compatibility or maintenance consequence                                                                       |
+| Correction    | Smallest useful fix or regression check                                                                                                     |
+
+Example: `[P2] Preserve the queued job on cancellation — src/worker.rs:42; cancelling after dequeue loses the job before persistence; acknowledge only after the write succeeds.`
+
+Style preferences are not correctness findings. If no actionable findings remain, say so. Finish with checks performed and any unreviewed scope or verification gaps.
+
+## Verify
+
+Use the project's existing build and CI commands first, including required generation or fixture steps. Select packages, Cargo targets, platform targets, and feature configurations from the affected code and supported CI matrix. Keep check, test, and Clippy configurations aligned.
+
+For a single crate with default features, a baseline is:
+
+```bash
+cargo fmt --check
+cargo check --all-targets
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
+Follow repository lint policy when it differs. Use `-p` or `--workspace` for the intended package scope and `--target` for relevant platform checks. Test affected optional features and supported configurations with or without default features. Use `--all-features` only when that combination is valid; mutually exclusive features need separate runs.
+
+For example, for a crate supporting an optional `json` feature, repeat applicable check, test, and Clippy commands with `--features json`. Include `--no-default-features` when supported and affected.
+
+| Additional check           | Use when                                                         |
+| -------------------------- | ---------------------------------------------------------------- |
+| `cargo nextest run`        | The project uses nextest; run doctests separately                |
+| `cargo test --doc`         | Public examples changed or the chosen test runner omits doctests |
+| `cargo +nightly miri test` | Relevant unsafe or memory-sensitive paths can run under Miri     |
+| Project benchmarks         | A performance improvement is claimed                             |
+| MSRV toolchain checks      | Changed code or dependencies may raise the declared MSRV         |
+
+Report what ran, passed, failed, or could not run. Compilation and lint success do not prove behavioral correctness.
+
+---
+
 # Understand Before Editing
 
 Before making substantial changes:
@@ -507,21 +584,51 @@ Performance claims require measurements.
 
 ---
 
-# Dependencies Have Architectural Cost
+# Prefer Crates That Remove Maintained Code
 
-Before adding a crate, ask:
+Minimal implementation means minimizing code and behavior we must maintain, not minimizing the dependency count. Prefer a suitable established crate over hand-written parsing, protocol handling, repetitive trait implementations, or custom infrastructure.
 
-- Does it eliminate meaningful complexity?
-- Is the dependency actively maintained?
-- Is its scope appropriate?
-- Does it dominate the architecture?
-- Does it introduce unnecessary runtime, build, or supply-chain cost?
+Reuse the project's existing suitable crate first. Otherwise, when a trigger below applies, **add the recommended crate by default** instead of reimplementing its functionality. An absent dependency is not a reason to choose a manual implementation. These are task-specific defaults, not a starter dependency bundle.
 
-Do not reimplement mature functionality merely to avoid dependencies.
+Use the standard library when it already covers the required semantics directly. Depart from a default for a concrete reason, such as repository policy, MSRV, `no_std`, target support, license restrictions, or disproportionate build/binary cost. Explain that reason briefly; dependency count alone is insufficient. Keep compatible existing alternatives rather than migrating them just to match this list.
 
-But do not introduce large frameworks to solve tiny problems.
+## Common Defaults
 
-Prefer dependencies that remain behind local seams so they can be replaced without contaminating the domain model.
+| Task trigger                                                           | Default crate                                                                                                                                               | Replace or avoid                                                                                                                     |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Define custom errors that callers distinguish                          | [thiserror](https://docs.rs/thiserror/latest/thiserror/)                                                                                                    | Repetitive manual `Display`, `Error`, source chaining, and `From` implementations                                                    |
+| Propagate varied errors with context at application/CLI boundaries     | [anyhow](https://docs.rs/anyhow/latest/anyhow/)                                                                                                             | Ad-hoc boxed errors and string conversion; retain typed errors where callers need recovery decisions                                 |
+| Serialize/deserialize structured data                                  | [serde](https://docs.rs/serde/latest/serde/), plus [serde_json](https://docs.rs/serde_json/latest/serde_json/) for JSON                                     | Manual codecs and JSON string assembly; prefer typed payloads for known schemas                                                      |
+| CLI options, flags, subcommands, help, or argument validation          | [clap](https://docs.rs/clap/latest/clap/)                                                                                                                   | A growing `std::env::args` parser; a single positional argument can stay in std                                                      |
+| Operational logging, especially async or request-scoped diagnostics    | [tracing](https://docs.rs/tracing/latest/tracing/) and application-side [tracing-subscriber](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/) | Custom logging/context plumbing; libraries emit events and leave subscriber setup to applications                                    |
+| Named combinable bit masks                                             | [bitflags](https://docs.rs/bitflags/latest/bitflags/)                                                                                                       | Manual flag wrappers, bit operators, and membership helpers; preserve required representation and unknown-bit behavior               |
+| Parse, resolve, or modify URLs and query parameters                    | [url](https://docs.rs/url/latest/url/)                                                                                                                      | Splitting URLs or concatenating unescaped query strings; URL parsing does not establish destination authorization                    |
+| Generate, parse, or format UUIDs required by the domain/protocol       | [uuid](https://docs.rs/uuid/latest/uuid/)                                                                                                                   | Custom UUID/random identifier implementations; retain ordinary numeric IDs where those are the actual contract                       |
+| Regular-expression matching                                            | [regex](https://docs.rs/regex/latest/regex/)                                                                                                                | A homegrown pattern matcher; compile reusable patterns once, use string methods for literal matching                                 |
+| Temporary files/directories with lifecycle cleanup                     | [tempfile](https://docs.rs/tempfile/latest/tempfile/)                                                                                                       | Invented temporary names and scattered cleanup; use as a dev dependency when only tests need it                                      |
+| Recursive directory traversal                                          | [walkdir](https://docs.rs/walkdir/latest/walkdir/)                                                                                                          | Hand-written recursive traversal; preserve explicit error and symlink policy                                                         |
+| Iterator operations missing from std that remove custom loops/helpers  | [itertools](https://docs.rs/itertools/latest/itertools/)                                                                                                    | Custom grouping, combinations, or join utilities; use std iterator methods when equivalent                                           |
+| Calendar dates/times, timestamps, parsing, or formatting               | [chrono](https://docs.rs/chrono/latest/chrono/)                                                                                                             | Hand-written calendar arithmetic; use `std::time` for elapsed time and simple durations                                              |
+| Exact decimal arithmetic with variable scale, such as prices and rates | [rust_decimal](https://docs.rs/rust_decimal/latest/rust_decimal/)                                                                                           | Floating-point money and a custom decimal type; fixed-scale integer minor units remain valid, with explicit rounding/overflow policy |
+
+For example, a permission mask should usually become a `bitflags!` type rather than a newtype with manual operators. A library's typed error can use `thiserror`, while its CLI adds `anyhow::Context`; these choices serve different callers and can coexist.
+
+## Development Defaults When the Technique Applies
+
+| Concrete testing need                                       | Default dev dependency                                   | Use it for                                                                                                |
+| ----------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Multiple named input/output cases or reusable test setup | [rstest](https://docs.rs/rstest/latest/rstest/) | Parameterized `#[case]` tests and `#[fixture]` setup instead of duplicated tests or a custom case runner |
+| Properties over many parser, transform, or invariant inputs | [proptest](https://docs.rs/proptest/latest/proptest/)    | Input generation and shrinking rather than a custom randomized test harness                               |
+| Large stable output best verified by reviewing diffs        | [insta](https://docs.rs/insta/latest/insta/)             | Snapshots with intentional review; normalize nondeterminism and keep focused assertions for small results |
+| Repeated performance comparisons                            | [criterion](https://docs.rs/criterion/latest/criterion/) | Benchmark sampling and comparisons rather than a homegrown timing harness                                 |
+
+Ordinary unit and integration tests use Rust's built-in test harness; `rstest` augments it when parameterization or fixtures reduce repetition. For example, use named cases for valid, empty, and malformed parser input so failures identify the specific case. Specialized tools still require the concrete risks described in Use Specialized Testing When It Buys Confidence.
+
+## Add Only the Relevant Dependency
+
+Before adding, check the workspace manifest and existing versions, current crate documentation and maintenance/advisories, required features, MSRV, targets, and repository dependency policy. Select a compatible version at implementation time rather than copying a version from this skill. Test/benchmark-only crates belong in dev dependencies.
+
+Keep dependencies behind meaningful interfaces where it reduces coupling. Call them directly when a forwarding wrapper would add no value. Report the chosen crate and the implementation it replaced in one sentence; do not build a comparison framework or add unrelated dependencies.
 
 ---
 
@@ -551,80 +658,3 @@ A refactor should make future changes easier.
 Prefer small structural improvements over broad rewrites.
 
 Preserve behavior unless changing behavior is part of the task.
-
----
-
-# Workflow
-
-Choose **Implement** for requested changes and **Review** for an assessment. Review alone does not authorize edits. Both start with Explore and use the relevant principles above.
-
-## Explore
-
-Apply Understand Before Editing. Establish the requested behavior or review scope and read repository instructions. Also inspect the lockfile, supported targets, and CI commands.
-
-Finish exploration when you can identify the behavior's owner, affected callers and contracts, and checks needed to verify it.
-
-## Implement
-
-1. Identify the smallest useful interface, important invariants, side effects, and ownership model. For a non-trivial new module, briefly consider two plausible designs.
-2. Complete one useful behavior end-to-end. Reuse existing code before introducing types, traits, modules, or dependencies. Keep unrelated cleanup out of scope.
-3. Add or update the smallest meaningful regression check for changed behavior. For a bug, establish a check exposing the failure before fixing its shared cause.
-4. Run relevant verification below and inspect the final diff for correctness, compatibility, and unnecessary concepts. Preserve behavior during refactoring unless a behavior change was requested.
-
-Finish when the requested behavior is implemented, relevant checks pass, and the diff contains only justified changes. If verification is blocked, report the remaining gap explicitly rather than claiming verified completion.
-
-## Review
-
-1. **Establish scope.** Use the requested commit, branch, diff, files, or whole-codebase scope. For a working-tree review, include staged, unstaged, and relevant untracked files. Identify affected public APIs, persistent data, wire formats, and security boundaries.
-2. **Trace behavior.** Follow the scoped code through callers, state changes, effects, failure paths, cleanup, and observable output. Compare it with the requested specification and repository standards.
-3. **Validate findings.** Apply the relevant risks below. Search and lint hits are leads, not findings: confirm the triggering condition and consequence in surrounding code.
-4. **Verify and report.** Run relevant checks where practical. Report actionable findings by severity; separate unconfirmed risks and verification gaps from confirmed defects. Apply fixes only when requested.
-
-| Changed area              | Review risks                                                                                                                               |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Inputs and failures       | Boundary validation, reachable panics, arithmetic on external sizes, partial updates, rollback and cleanup failures                        |
-| Async and concurrency     | Lock ordering, guards across await, blocking executor work, cancellation data loss, bounded queues, overload, task ownership and shutdown  |
-| Unsafe and FFI            | Safety contracts, validity, alignment, initialization, aliasing, layout, ownership transfer, deallocation, unwinding, manual `Send`/`Sync` |
-| Public contracts          | Visibility, trait and auto-trait changes, error variants, serialized shapes, features, targets, MSRV and semver                            |
-| Security and dependencies | Attacker-controlled paths, secret exposure in logs/errors/Debug output, resource limits, advisories and repository supply-chain policy     |
-| Performance               | Material costs on actual workloads, quadratic work, unbounded growth and evidence supporting claims                                        |
-| Tests and documentation   | Observable regressions, relevant failures, API contracts, safety requirements and executable public examples                               |
-
-| Finding field | Required content                                                                                                                            |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Severity      | P1: urgent correctness, safety or security defect; P2: actionable defect under a concrete condition; P3: lower-impact maintainability issue |
-| Location      | File and tight line range                                                                                                                   |
-| Condition     | Concrete input or caller path triggering the issue                                                                                          |
-| Impact        | Observable behavior, safety, compatibility or maintenance consequence                                                                       |
-| Correction    | Smallest useful fix or regression check                                                                                                     |
-
-Example: `[P2] Preserve the queued job on cancellation — src/worker.rs:42; cancelling after dequeue loses the job before persistence; acknowledge only after the write succeeds.`
-
-Style preferences are not correctness findings. If no actionable findings remain, say so. Finish with checks performed and any unreviewed scope or verification gaps.
-
-## Verify
-
-Use the project's existing build and CI commands first, including required generation or fixture steps. Select packages, Cargo targets, platform targets, and feature configurations from the affected code and supported CI matrix. Keep check, test, and Clippy configurations aligned.
-
-For a single crate with default features, a baseline is:
-
-```bash
-cargo fmt --check
-cargo check --all-targets
-cargo test
-cargo clippy --all-targets -- -D warnings
-```
-
-Follow repository lint policy when it differs. Use `-p` or `--workspace` for the intended package scope and `--target` for relevant platform checks. Test affected optional features and supported configurations with or without default features. Use `--all-features` only when that combination is valid; mutually exclusive features need separate runs.
-
-For example, for a crate supporting an optional `json` feature, repeat applicable check, test, and Clippy commands with `--features json`. Include `--no-default-features` when supported and affected.
-
-| Additional check           | Use when                                                         |
-| -------------------------- | ---------------------------------------------------------------- |
-| `cargo nextest run`        | The project uses nextest; run doctests separately                |
-| `cargo test --doc`         | Public examples changed or the chosen test runner omits doctests |
-| `cargo +nightly miri test` | Relevant unsafe or memory-sensitive paths can run under Miri     |
-| Project benchmarks         | A performance improvement is claimed                             |
-| MSRV toolchain checks      | Changed code or dependencies may raise the declared MSRV         |
-
-Report what ran, passed, failed, or could not run. Compilation and lint success do not prove behavioral correctness.
