@@ -11,7 +11,7 @@ Use these examples when implementing or reviewing domain types, module boundarie
 | Constrained values                          | Validated constructors and controlled mutation    | Keep invariants valid after construction      |
 | Expected absence or failure                 | `Option` or `Result`                              | Make caller decisions explicit                |
 
-Prefer names such as `AlertRule`, `DetectionResult`, and `WorkflowExecution` over generic `DataManager` or `ItemProcessor`.
+Prefer names such as `Order`, `OrderLine`, and `Shipment` over generic `DataManager` or `ItemProcessor`.
 
 ```rust
 // Keep user and session identifiers distinct so callers cannot swap them.
@@ -39,7 +39,7 @@ A function, type, module, crate, or subsystem can be a module in this sense. Ask
 | Plugin contract or independently owned implementations | Expose the contract required by its consumers                  |
 
 ```rust
-struct SqliteEventStore {
+struct SqliteOrderStore {
     // Keep persistence concrete until a real seam requires polymorphism.
 }
 ```
@@ -70,8 +70,8 @@ File size alone is not a design verdict.
 ## Explicit Data Flow
 
 ```rust
-// Make the rule and event inputs explicit so evaluation is independently testable.
-fn evaluate(rule: &Rule, event: &Event) -> DetectionResult
+// Make prices and order lines explicit so quoting is independently testable.
+fn quote(prices: &PriceList, lines: &[OrderLine]) -> Quote
 ```
 
 A useful shape is input → domain computation → decision/result → effectful adapter. Separate computation from effects where it improves clarity; retain direct effects when forcing separation would obscure the operation.
@@ -92,6 +92,29 @@ For shared mutable access, compare transferring ownership, immutable sharing, me
 
 ## Configuration and Public Interfaces
 
-A call such as `process(event, true, false, true, RetryMode::Aggressive)` hides the meaning of its choices. Prefer explicit domain operations or a coherent configuration object.
+A call such as `ship(order, true, false, true, ShippingSpeed::Express)` hides the meaning of its choices. Prefer explicit domain operations or a coherent configuration object.
 
 Keep fields and helper types private unless callers need them. Expose the invariants, ordering, errors, and configuration callers must understand alongside type signatures.
+
+## Compatibility and Lint Exceptions
+
+Treat external names and validation behavior as contracts when callers or stored artifacts rely on them, even if the corresponding Rust fields are private.
+
+| Situation                                               | Refactoring decision                                                                               |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Serialization supports separate Rust and external names | Keep the external name stable through the serialization mechanism                                  |
+| Storage derives record keys from Rust field names       | Preserve compatible names or an explicit mapping, whichever keeps ownership and validation clearer |
+| Accepted aliases still trigger unknown-field errors     | Make alias handling consume the field while preserving strict unknown-field diagnostics            |
+| A contract requires lint-disfavored names               | Scope a reasoned exception to the affected field or item under repository lint policy              |
+
+For example, if a storage framework derives record keys from field names and offers no renaming mechanism:
+
+```rust
+struct CustomerRecord {
+    // Preserve the stored key so existing records remain readable.
+    #[expect(non_snake_case, reason = "field name is part of the stored record schema")]
+    customerId: u64,
+}
+```
+
+Use `#[expect]` when supported by the repository toolchain; follow its established exception mechanism otherwise. Verify both successful reading and required diagnostics after changing names or mappings.

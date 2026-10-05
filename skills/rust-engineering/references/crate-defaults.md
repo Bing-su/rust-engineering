@@ -1,6 +1,8 @@
 # Crate Defaults
 
-Read this reference when implementing support functionality, choosing a dependency, or reviewing custom helpers. These are task-specific defaults, not a starter dependency bundle. Apply Dependency Selection in `SKILL.md` for constraints and compatibility checks.
+Read this reference when implementing support functionality, choosing a dependency, or reviewing custom helpers. These are task-specific defaults for otherwise unconstrained choices, not a starter dependency bundle. Apply [Dependency Selection](../SKILL.md#dependency-selection) before using this table: explicit user or repository choices, suitable existing implementations, and directly suitable std functionality take precedence.
+
+For example, retain a repository's suitable CLI parser rather than migrating it to `clap` to match this table.
 
 ## Common Defaults
 

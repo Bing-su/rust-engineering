@@ -1,6 +1,6 @@
 ---
 name: rust-engineering
-description: Use this skill when implementing, refactoring, or reviewing production Rust code, or designing its domain model and module boundaries. Favor maintainable architecture, explicit ownership, testable behavior, and dependencies that reduce maintained code.
+description: General Rust engineering guidance for implementation, refactoring, reviews, domain modeling, and module boundaries. Prefer an available skill dedicated to the requested task; use this skill as Rust-specific supporting guidance or as a fallback when none applies.
 ---
 
 # Rust Engineering
@@ -27,11 +27,13 @@ Do not sacrifice higher priorities for lower ones without a concrete reason.
 
 # Workflow
 
-Choose **Implement** for requested changes and **Review** for an assessment. Review alone does not authorize edits. Both start with Explore and use the relevant principles below.
+Honor explicit user choices and repository instructions. When an available dedicated skill applies to the requested task, follow it for that task's scope, workflow, and reporting. Use this skill's Rust principles and verification guidance as supporting reference. For example, prefer a diagnosis skill for debugging, a TDD skill for requested test-first development, or a review skill for code review.
+
+For parts of the task without an applicable dedicated skill, choose **Implement** for requested changes and **Review** for an assessment. These fallback workflows start with Explore and use the relevant principles below. Review alone does not authorize edits.
 
 ## Explore
 
-Establish the requested behavior or review scope and read repository instructions. Inspect the relevant module, callers, tests, domain documentation, Cargo manifests, lockfile, supported targets, toolchain/MSRV, and CI commands. Preserve established architecture unless a concrete problem justifies changing it.
+Establish the requested behavior or review scope and read repository instructions. Start with the affected module, callers, tests, observable contracts, and relevant project checks. Expand into domain documentation, Cargo manifests, lockfile, supported targets, toolchain/MSRV, and CI configuration when the change or review scope reaches those concerns. Preserve established architecture unless a concrete problem justifies changing it.
 
 Finish exploration when you can identify the behavior's owner, affected callers and contracts, and checks needed to verify it.
 
@@ -39,12 +41,14 @@ Finish exploration when you can identify the behavior's owner, affected callers 
 
 1. Identify the smallest useful interface, important invariants, side effects, and ownership model. For a non-trivial new module, briefly consider two plausible designs.
 2. Complete one useful behavior end-to-end. Reuse existing code and suitable dependencies; apply Dependency Selection before hand-writing supporting functionality. Keep unrelated cleanup out of scope.
-3. Add or update the smallest meaningful regression check for changed behavior. For a bug, establish a check exposing the failure before fixing its shared cause.
+3. Add or update the smallest meaningful regression check for changed behavior. For a bug, establish a check exposing the failure before fixing its shared cause. For a behavior-preserving refactor, reuse existing checks when they cover the affected contracts; add a check only for a concrete coverage gap.
 4. Run relevant verification below and inspect the final diff for correctness, compatibility, and unnecessary concepts. Preserve behavior during refactoring unless a behavior change was requested.
 
 Finish when the requested behavior is implemented, relevant checks pass, and the diff contains only justified changes. If verification is blocked, report the remaining gap explicitly rather than claiming verified completion.
 
 ## Review
+
+This workflow and finding format apply only to fallback reviews.
 
 1. **Establish scope.** Use the requested commit, branch, diff, files, or whole-codebase scope. For a working-tree review, include staged, unstaged, and relevant untracked files. Identify affected public APIs, persistent data, wire formats, and security boundaries.
 2. **Trace behavior.** Follow the scoped code through callers, state changes, effects, failure paths, cleanup, and observable output. Compare it with the requested specification and repository standards.
@@ -75,7 +79,7 @@ Style preferences are not correctness findings. If no actionable findings remain
 
 ## Verify
 
-Use the project's existing build and CI commands first, including required generation or fixture steps. Select packages, Cargo targets, platform targets, and feature configurations from the affected code and supported CI matrix. Keep check, test, and Clippy configurations aligned.
+Use the project's existing build and CI commands first, including required generation or fixture steps. Scale verification to the affected behavior and risk while completing required repository checks. Select packages, Cargo targets, platform targets, and feature configurations from the affected code and supported CI matrix. Keep check, test, and Clippy configurations aligned.
 
 For a single crate with default features, a baseline is:
 
@@ -90,15 +94,19 @@ Follow repository lint policy when it differs. Use `-p` or `--workspace` for the
 
 For example, for a crate supporting an optional `json` feature, repeat applicable check, test, and Clippy commands with `--features json`. Include `--no-default-features` when supported and affected.
 
-| Additional check           | Use when                                                         |
-| -------------------------- | ---------------------------------------------------------------- |
-| `cargo nextest run`        | The project uses nextest; run doctests separately                |
-| `cargo test --doc`         | Public examples changed or the chosen test runner omits doctests |
-| `cargo +nightly miri test` | Relevant unsafe or memory-sensitive paths can run under Miri     |
-| Project benchmarks         | A performance improvement is claimed                             |
-| MSRV toolchain checks      | Changed code or dependencies may raise the declared MSRV         |
+| Additional check                      | Use when                                                                                  |
+| ------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `cargo nextest run`                   | The project uses nextest; run doctests separately                                         |
+| `cargo test --doc`                    | Public examples changed or the chosen test runner omits doctests                          |
+| Selected ignored or hardware tests    | Affected behavior is covered by tests excluded from ordinary runs; execute when available |
+| Reference or differential comparisons | Numerical or format compatibility needs a trusted implementation or pre-change baseline   |
+| `cargo +nightly miri test`            | Relevant unsafe or memory-sensitive paths can run under Miri                              |
+| Project benchmarks                    | A performance improvement is claimed                                                      |
+| MSRV toolchain checks                 | Changed code or dependencies may raise the declared MSRV                                  |
 
-Report what ran, passed, failed, or could not run. Compilation and lint success do not prove behavioral correctness.
+Compare structured output by semantic values unless textual formatting is contractual. For floating-point comparisons, use tolerances justified by the operation, numeric precision, and execution environment; retain relevant length, range, and finite-value checks.
+
+Report what ran, passed, failed, or could not run, including relevant excluded tests. Bound claims to the tested inputs, configurations, and workloads: compilation and lint success do not prove behavioral correctness, and passing small test cases does not establish memory use or performance under representative workloads.
 
 ---
 
@@ -174,9 +182,16 @@ Zero-copy, pooling, unsafe code, custom allocation, lock-free structures, and ad
 
 ## Dependency Selection
 
-Minimize code and behavior to maintain, rather than dependency count alone. Reuse an existing suitable crate first. When implementation or review reaches a task in [Crate defaults](references/crate-defaults.md), use its default instead of reimplementing that functionality unless a concrete constraint favors another choice.
+Minimize code and behavior to maintain, rather than dependency count alone. Apply these choices in order:
 
-Use std when it already covers the required semantics directly. Preserve compatible existing alternatives. Concrete exceptions include repository policy, MSRV, `no_std`, target support, license restrictions, or disproportionate build/binary cost; explain the reason briefly.
+| Priority | Choice                              | Decision                                                                                                               |
+| -------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| 1        | Explicit user or repository choices | Honor the chosen technology and constraints within correctness, safety, and compatibility requirements                 |
+| 2        | Existing implementations or crates  | Reuse suitable code at reasonable maintenance cost; preserve compatible alternatives to this skill's defaults          |
+| 3        | Standard library                    | Use std when it directly covers the required semantics without substantial custom support code                         |
+| 4        | Task-specific crate defaults        | Use [Crate defaults](references/crate-defaults.md) for otherwise unconstrained choices instead of hand-writing support |
+
+Concrete constraints favoring another choice include MSRV, `no_std`, target support, license restrictions, or disproportionate build/binary cost; explain the reason briefly. A difference from the default alone is not a reason to migrate an existing dependency or a review finding.
 
 Before adding a dependency, check workspace versions, current crate documentation and maintenance/advisories, required features, MSRV, supported targets, and repository policy. Select a compatible version at implementation time; test/benchmark-only crates belong in dev dependencies.
 
@@ -184,6 +199,8 @@ Keep dependencies behind meaningful interfaces when that reduces coupling; call 
 
 ## Refactoring
 
-Preserve behavior unless the requested task changes it. Favor small structural improvements that reduce caller concepts, strengthen locality and ownership, or remove duplicated invariants.
+Preserve behavior unless the requested task changes it. Include external contracts beyond Rust public APIs: serialized fields, stored record keys, wire formats, and required missing/unknown-field diagnostics. Retain adapters or mappings that express genuine format differences; removing them is useful only when their contracts remain enforced. Favor small structural improvements that reduce caller concepts, strengthen locality and ownership, or remove duplicated invariants.
+
+When an external contract requires lint-disfavored names or structure, follow repository lint policy and prefer the narrowest justified exception with a reason. Read [Compatibility examples](references/design-examples.md#compatibility-and-lint-exceptions) when refactoring externally named fields, adapters, or lint exceptions.
 
 Judge a refactor by easier future changes, rather than line count, file count, pattern usage, or trait usage. Generalize shared semantics once they are clear; similar syntax alone may be cheaper to duplicate.
