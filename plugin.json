@@ -15,6 +15,8 @@
     "com.openai": {
       "interface": {
         "displayName": "Rust Engineering",
+        "logo": "./assets/icon-1024.png",
+        "composerIcon": "./assets/icon-512.png",
         "shortDescription": "Build maintainable Rust code",
         "longDescription": "Implement, refactor, and review production Rust code. Prioritize clear domain models, good module boundaries, explicit ownership, testable behavior, and dependencies that reduce maintained code. Includes design examples and crate selection guidance.",
         "developerName": "Bing-su",

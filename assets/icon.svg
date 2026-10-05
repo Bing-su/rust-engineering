@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#171B20"/>
+      <stop offset="1" stop-color="#0D1014"/>
+    </linearGradient>
+    <linearGradient id="rust" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F07A3D"/>
+      <stop offset="1" stop-color="#C84E2F"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#000" flood-opacity=".28"/>
+    </filter>
+  </defs>
+
+  <!-- background -->
+  <rect x="32" y="32" width="960" height="960" rx="220" fill="url(#bg)"/>
+
+  <!-- subtle inner frame -->
+  <rect x="74" y="74" width="876" height="876" rx="184"
+        fill="none" stroke="#FFFFFF" stroke-opacity=".07" stroke-width="8"/>
+
+  <!-- engineering nut / architecture symbol -->
+  <g filter="url(#shadow)">
+    <path d="M512 174
+             L742 307
+             L742 573
+             L512 706
+             L282 573
+             L282 307 Z"
+          fill="url(#rust)"/>
+    <path d="M512 238
+             L686 338
+             L686 542
+             L512 642
+             L338 542
+             L338 338 Z"
+          fill="#11151A"/>
+  </g>
+
+  <!-- code brackets -->
+  <path d="M438 365 L350 440 L438 515"
+        fill="none" stroke="#F4F1EC" stroke-width="44"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M586 365 L674 440 L586 515"
+        fill="none" stroke="#F4F1EC" stroke-width="44"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- ownership / flow slash -->
+  <path d="M548 334 L476 546"
+        fill="none" stroke="#F07A3D" stroke-width="34"
+        stroke-linecap="round"/>
+
+  <!-- lower engineering rails: module boundaries -->
+  <g fill="#F4F1EC">
+    <rect x="334" y="742" width="356" height="40" rx="20"/>
+    <rect x="386" y="810" width="252" height="40" rx="20" opacity=".72"/>
+  </g>
+
+  <!-- small rust accent -->
+  <circle cx="512" cy="440" r="18" fill="#F07A3D"/>
+</svg>
